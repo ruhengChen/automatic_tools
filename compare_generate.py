@@ -4,6 +4,7 @@
 修改添加了windows下的路径,需要在config中选择合适的路径
 修改了local_time 的格式 从YYYY-MM-DD 改为了 YYYYMMDD
 """
+# todo 需要改为可配置
 
 # import pyodbc
 import ibm_db
