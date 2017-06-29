@@ -77,14 +77,27 @@ def get_backup_table(input_date):
     
     print("backup_table_list:", backup_table_list)
     
-    backup_tables(backup_table_list)
+    backup_tables(input_date, backup_table_list)
 
     
-def backup_tables(backup_table_list):
+def backup_tables(input_date, backup_table_list):
     """备份需要的表结构:包括"""
     """DELTA中需要 DROP 的表、 ALTER TABLE 中需要 ALTER 和 RENAME 的表,若已备份则不备份"""
     
-    pass
+    for table in backup_table_list:
+        print("backup table %s" %table)
+        schema, tablename = table.split('.')
+        backup_path = config.backup_path.format(date=input_date)+table+".ddl.bak"
+        print(backup_path)
+        if os.path.exists(backup_path):
+            print("backup exists %s" %table)
+        else:
+            cmd = "db2look -d {edwdb} -i {edwuser} -w {edwpwd} -z {schema} -e -t {tablename} -nofed -o /etl/etldata/script/yatop_update/{date}/backup/{table}.ddl.bak".format(edwdb=config.edwdb, edwuser=config.edwuser, edwpwd=config.edwpwd, schema=schema,tablename=tablename,date=input_date,table=table)
+            status, output = subprocess.getstatusoutput(cmd)
+            if status:
+                print("\033[1;31;40mcreate ddl error %s\033[0m" %table)
+                print(output)
+                sys.exit(-1)
     
 def backup_schedule(input_date):
     """备份调度用的JOB_METADATA,和 JOB_SEQ"""
@@ -169,8 +182,9 @@ if __name__=="__main__":
         # rows = cursor_dw.fetchone()
         stmt = ibm_db.exec_immediate(conn, sql);
         rows = ibm_db.fetch_tuple(stmt)
-    
+        
         input_date = rows[0]
+        
         
         if str(input_date) == '00000000':
             print("\033[1;31;40mdate is not valid,sys exit...\033[0m")
