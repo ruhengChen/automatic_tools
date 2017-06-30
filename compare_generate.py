@@ -16,6 +16,25 @@ import os
 import subprocess
 import time
 import config
+import traceback
+import json
+
+
+## params
+DSN=config.DSN
+DSNUSER=config.DSNUSER
+DSNPWD=config.DSNPWD
+tabspace=config.TABSPACE
+ip=config.IP
+edwdb=config.edwdb
+edwuser=config.edwuser
+edwpwd=config.edwpwd
+dwmmdb=config.dwmmdb
+dwmmuser=config.dwmmuser
+dwmmpwd=config.dwmmpwd
+
+conn = ibm_db.connect("DATABASE=YATOPDB;HOSTNAME=101.37.36.131;PORT=62000;PROTOCOL=TCPIP;UID=appinst;PWD=appinst;", "", "")
+
 
 local_time = time.strftime("%Y%m%d", time.localtime())
 
@@ -33,6 +52,8 @@ def getResultList(sql):
 class Logger:        
     def __init__(self, logName, logFile):
         self._logger = logging.getLogger(logName)
+        if os.path.exists(logFile):
+            os.remove(logFile)
         handler = logging.FileHandler(logFile,mode='w')
         self._logger.addHandler(handler)
         self._logger.setLevel(logging.INFO)
@@ -43,7 +64,7 @@ class Logger:
 
 ## 新增表处理
 def deal_table_add(tablelist,date):
-    read_me_log.log("增加下发表:\n"+', '.join(tablelist)+'\n')
+    read_me_log.log("add tables:\n"+', '.join(tablelist)+'\n')
     for tablename in tablelist:
         deal_table_all(tablename,date,tabspace)
         syscode, tablenm = tablename.split('.')
@@ -72,7 +93,7 @@ def deal_table_add(tablelist,date):
 
 ## 删除表处理
 def deal_table_del(tablelist,date):
-    read_me_log.log("删除下发表:\n"+', '.join(tablelist)+'\n')
+    read_me_log.log("del tables:\n"+', '.join(tablelist)+'\n')
     for tablename in tablelist:
         print("del table " + tablename)
         tablestr = tablename.replace('.','_')
@@ -750,7 +771,7 @@ def deal_column_del(table, newdate, olddate, del_list, is_primary, old_column_di
             # cursor_dw.execute(sql)
             # rows = cursor_dw.fetchall()
             rows=getResultList(sql)
-            read_me_log.log("主键表删除字段及类型: "+table+"."+key+":"+old_column_dict[key]+'\t'+rows[0][0]+'\n')
+            read_me_log.log("primary_tb del column: "+table+"."+key+":"+old_column_dict[key]+'\t'+rows[0][0]+'\n')
 
         if "Y" not in primary_list: ##主键表删除非主键字段
             # read_me_log.log("DEL COLLUMN(NOT PRIMARY KEY):")
@@ -840,7 +861,7 @@ def deal_column_del(table, newdate, olddate, del_list, is_primary, old_column_di
             # cursor_dw.execute(sql)
             # rows = cursor_dw.fetchall()
             rows=getResultList(sql)
-            read_me_log.log("无主键表删除字段及类型: "+table+"."+key+":"+old_column_dict[key]+'\t'+rows[0][0]+'\n')
+            read_me_log.log("no_primary_tb del column: "+table+"."+key+":"+old_column_dict[key]+'\t'+rows[0][0]+'\n')
         # read_me_log.log("无主键表删除字段:")
             ## 重新生成DELTA表
         tabletype="add column"
@@ -889,7 +910,7 @@ def deal_column_add(table, newdate, add_list, is_primary, new_column_dict):
             # cursor_dw.execute(sql)
             # rows = cursor_dw.fetchall()
             rows=getResultList(sql)
-            read_me_log.log("主键表增加字段及类型: "+table+"."+key+":"+new_column_dict[key]+'\t'+rows[0][0]+'\n')
+            read_me_log.log("primary_tb add column: "+table+"."+key+":"+new_column_dict[key]+'\t'+rows[0][0]+'\n')
 
         if "Y" not in primary_list: #主键表添加非主键字段
             print("columns are not primary_key")
@@ -1077,7 +1098,7 @@ def deal_column_add(table, newdate, add_list, is_primary, new_column_dict):
             # cursor_dw.execute(sql)
             # rows = cursor_dw.fetchall()
             rows=getResultList(sql)
-            read_me_log.log("非主键表增加字段及类型: "+table+"."+key+":"+new_column_dict[key]+'\t'+rows[0][0]+'\n')
+            read_me_log.log("no_primary_tb add column: "+table+"."+key+":"+new_column_dict[key]+'\t'+rows[0][0]+'\n')
 
         if "Y" not in primary_list: ## 非主键表增加非主键字段
             # read_me_log.log("ADD COLLUMN(NOT PRIMARY KEY) IN TABLE WITHOUT PRIMARY:")
@@ -1302,7 +1323,7 @@ def deal_columns(need_tables,olddate,newdate):
                 # new_type = re.sub(reg,'',new_type)
                 if old_type != new_type:
                     print(table +' update:' + i +' old_type: '+old_type+' new_type:'+new_type)
-                    read_me_log.log("\n字段属性更新: "+table+"."+i+' old_type: '+old_type+' new_type:'+new_type+'\n')
+                    read_me_log.log("\nfield_code_update: "+table+"."+i+' old_type: '+old_type+' new_type:'+new_type+'\n')
                     # update_list
                     deal_column_update(table, newdate, olddate, list(common_set), is_primary, new_column_dict, old_type, new_type, i)
         # break
@@ -1310,7 +1331,7 @@ def deal_columns(need_tables,olddate,newdate):
 
 ## 新增模式名
 def deal_add_schema(schema):
-    compare_generate_log.log("新增模式名: %s" %schema)
+    compare_generate_log.log("add schema: %s" %schema)
     job.log("--add schema")
 
     sqls = ["INSERT INTO ETL.JOB_METADATA (JOB_NM,SCHD_PERIOD,JOB_TP,LOCATION,JOBCMD,PARAMS,PRIORITY,EST_WRKLD,MTX_GRP,INIT_FLAG,PPN_TSTMP,INIT_BATCH_NO,MAX_BATCH_NO,SRC_SYS_ID,JOB_DESC,SCHD_ENGIN_IP) VALUES ('UNCOMPRESS_%s','DAY','CMD','L_ODSLD','uncompress.sh','%s $dateid','5','1','UNCOMPRESS_%s','N',CURRENT TIMESTAMP,'1','1','%s','','%s');" %(schema,schema,schema,schema,ip),
@@ -1345,126 +1366,105 @@ def deal_schema(olddate,newdate):
         if schema not in exists_schema_list:
             deal_add_schema(schema)
 
-if __name__=="__main__":
-    # try:
-    # with open("automatic.conf",'r', encoding='utf-8') as f:
-        # data = f.readlines()
 
-    # conf_dict = {}
-    # for i in data:
-        # key,value = i.strip().split('=')
-        # conf_dict[key] = value
+return_dict = {}
 
+sql = "select distinct change_date from DSA.ORGIN_TABLE_DETAIL order by change_date"
+
+rows=getResultList(sql)
+
+datelist = []
+for date in rows:
+    datelist.append(date[0])
+
+datelist = datelist[-2:]
+
+## 若没有直接退出
+if len(datelist) == 0:
+    return_dict["returnCode"] = 400
+    return_dict["returnMsg"] = "no data in database"
     
-    DSN=config.DSN
-    DSNUSER=config.DSNUSER
-    DSNPWD=config.DSNPWD
-    tabspace=config.TABSPACE
-    ip=config.IP
-    edwdb=config.edwdb
-    edwuser=config.edwuser
-    edwpwd=config.edwpwd
-    dwmmdb=config.dwmmdb
-    dwmmuser=config.dwmmuser
-    dwmmpwd=config.dwmmpwd
+## 若存在一个日期,则全为新增表
+elif len(datelist) == 1:
+    print("only one date,all tables will be definited on insert")
+    datelist.insert(0,'19000101')
+
+print(datelist)
+
+quanliang_flag = 0
+# with open("content.txt","r") as f:
+    # data = f.read()
+
+# reg = re.compile("/S-999000/ODS/ALL/"+datelist[1]+"/")
+# result = re.findall(reg, data)
+# if result:
+    # print("这次变更为全量")
+    # quanliang_flag = 1
+# else:
+    # quanliang_flag = 0
+
+
+if not os.path.isdir(os.path.dirname(config.delta_tables_path.format(date=datelist[1]))):
+    os.makedirs(os.path.dirname(config.delta_tables_path.format(date=datelist[1])))
+if not os.path.isdir(config.apsql_path.format(date=datelist[1], APNAME='')):
+    os.makedirs(config.apsql_path.format(date=datelist[1], APNAME=''))
+
+
+## 日志处理
+delta_log = Logger('delta_log', config.delta_tables_path.format(date=datelist[1]))
+all_log = Logger('all_log', config.ods_tables_path.format(date=datelist[1]))
+his_log = Logger('his_log', config.his_tables_path.format(date=datelist[1]))
+
+delta_log.log("connect to {} user {} using {};".format(edwdb,edwuser,edwpwd))
+all_log.log("connect to {} user {} using {};".format(edwdb,edwuser,edwpwd))
+his_log.log("connect to {} user {} using {};".format(edwdb,edwuser,edwpwd))
+
+read_me_log = Logger('read_me_log', config.read_me_path.format(date=datelist[1]))
+compare_generate_log = Logger("compare_generate_log", config.compare_generate_path.format(date=datelist[1]))
+# table_add_column = Logger('table_add_column', datelist[1]+'/table_add_column.sql')
+# reorg_table = Logger('reorg_table', datelist[1]+'/reorg_table.sql')
+job = Logger('job', config.job_schedule_path.format(date=datelist[1]))
+
+job.log("connect to {} user {} using {};".format(dwmmdb,dwmmuser,dwmmpwd))
+# ap_job = Logger('ap_job', datelist[1]+'/ap_job.sql')
+alter_table = Logger('alter_table', config.alter_table_path.format(date=datelist[1]))
+
+def main():
+    if return_dict:
+        return return_dict
+
+    try:
+        deal_schema(datelist[0],datelist[1])
+
+        need_tables = get_differ_table(datelist[0], datelist[1])
+
+        if need_tables:
+            deal_columns(need_tables, datelist[0], datelist[1])
+
+
+        if quanliang_flag == 1:
+            job.log("UPDATE ETL.JOB_METADATA set INIT_FLAG ='Y' WHERE JOB_NM LIKE '%_INIT';")
+            job.log("UPDATE ETL.JOB_METADATA set INIT_FLAG ='N' WHERE INIT_FLAG= 'W';")
+            job.log("UPDATE ETL.JOB_METADATA set INIT_FLAG ='U' WHERE JOB_NM LIKE '%_YATOPUPDATE';")
     
-
-    # con = pyodbc.connect(DSN=DSN,UID=DSNUSER,PWD=DSNPWD)
-    conn = ibm_db.connect("DATABASE=YATOPDB;HOSTNAME=101.37.36.131;PORT=62000;PROTOCOL=TCPIP;UID=appinst;PWD=appinst;", "", "")
-    # print(con)
-    # cursor_dw = con.cursor()
-
-    datestring = input("please input one date or two date divided by comma,if not need,please input 'Enter' to skip:")
-
-    if not datestring:
-        sql = "select distinct change_date from DSA.ORGIN_TABLE_DETAIL order by change_date"
-        # cursor_dw.execute(sql)
-        # rows = cursor_dw.fetchall()
-        rows=getResultList(sql)
-
-        datelist = []
-        for date in rows:
-            datelist.append(date[0])
-
-        datelist = datelist[-2:]
+    except Exception:
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        return_dict["returnCode"] = 401
+        return_dict["returnMsg"] = repr(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    
+    if return_dict:
+        return json.dumps(return_dict)
     else:
-        datelist = datestring.split(',')
-
-    ## 若没有直接退出
-    if len(datelist) == 0:
-        print("exists_file.txt is empty,exit...")
-        input()
-        sys.exit()
-    ## 若存在一个日期,则全为新增表
-    elif len(datelist) == 1:
-        print("only one date,all tables will be definited on insert")
-        datelist.insert(0,'19000101')
-
-    print(datelist)
+        with open(config.read_me_path.format(date=datelist[1]),'r') as f:
+            data = f.read()
+        return json.dumps({"returnCode":200, "returnMsg":"execute OK,"+data})
     
-    quanliang_flag = 0
-    # with open("content.txt","r") as f:
-        # data = f.read()
-
-    # reg = re.compile("/S-999000/ODS/ALL/"+datelist[1]+"/")
-    # result = re.findall(reg, data)
-    # if result:
-        # print("这次变更为全量")
-        # quanliang_flag = 1
-    # else:
-        # quanliang_flag = 0
-
-
-    if not os.path.isdir(os.path.dirname(config.delta_tables_path.format(date=datelist[1]))):
-        os.makedirs(os.path.dirname(config.delta_tables_path.format(date=datelist[1])))
-    if not os.path.isdir(config.apsql_path.format(date=datelist[1], APNAME='')):
-        os.makedirs(config.apsql_path.format(date=datelist[1], APNAME=''))
-    
-
-    ## 日志处理
-    delta_log = Logger('delta_log', config.delta_tables_path.format(date=datelist[1]))
-    all_log = Logger('all_log', config.ods_tables_path.format(date=datelist[1]))
-    his_log = Logger('his_log', config.his_tables_path.format(date=datelist[1]))
-
-    delta_log.log("connect to {} user {} using {};".format(edwdb,edwuser,edwpwd))
-    all_log.log("connect to {} user {} using {};".format(edwdb,edwuser,edwpwd))
-    his_log.log("connect to {} user {} using {};".format(edwdb,edwuser,edwpwd))
-
-    read_me_log = Logger('read_me_log', config.read_me_path.format(date=datelist[1]))
-    compare_generate_log = Logger("compare_generate_log", config.compare_generate_path.format(date=datelist[1]))
-    # table_add_column = Logger('table_add_column', datelist[1]+'/table_add_column.sql')
-    # reorg_table = Logger('reorg_table', datelist[1]+'/reorg_table.sql')
-    job = Logger('job', config.job_schedule_path.format(date=datelist[1]))
-
-    job.log("connect to {} user {} using {};".format(dwmmdb,dwmmuser,dwmmpwd))
-    # ap_job = Logger('ap_job', datelist[1]+'/ap_job.sql')
-    alter_table = Logger('alter_table', config.alter_table_path.format(date=datelist[1]))
-
-    deal_schema(datelist[0],datelist[1])
-
-    need_tables = get_differ_table(datelist[0], datelist[1])
-
-    if need_tables:
-        deal_columns(need_tables, datelist[0], datelist[1])
-
-
-    if quanliang_flag == 1:
-        job.log("UPDATE ETL.JOB_METADATA set INIT_FLAG ='Y' WHERE JOB_NM LIKE '%_INIT';")
-        job.log("UPDATE ETL.JOB_METADATA set INIT_FLAG ='N' WHERE INIT_FLAG= 'W';")
-        job.log("UPDATE ETL.JOB_METADATA set INIT_FLAG ='U' WHERE JOB_NM LIKE '%_YATOPUPDATE';")
+ 
         
-    # result_file.close()
-    # print("请确认变更情况是否正确，确认无误后请执行变更程序XXXX")
-    read_me_log.log("请确认变更情况是否正确，确认无误后请执行变更程序sub_ftp.exe")
-    # answer = input("Enter Y to execute sub_ftp.exe or enter N to Exit:")
-    # if answer.upper() == "Y":
-        # subprocess.call("sub_ftp.exe")
+if __name__=="__main__":
+    resp = main()
+    print(resp)
 
-    # ftp_job_schedule_ddl_sql(datelist[1])
-    # except Exception as e:
-        # print(sys.exc_info())
-        # # input()
-        # sys.exit()
 
 
 

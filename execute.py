@@ -8,8 +8,11 @@ import datetime
 import sys
 import shutil
 import re
+import json
+import traceback
 import subprocess
 
+conn = ibm_db.connect("DATABASE=YATOPDB;HOSTNAME=101.37.36.131;PORT=62000;PROTOCOL=TCPIP;UID=appinst;PWD=appinst;", "", "")
 
 def validate_date(date):
     """判断确认此日期大于job_log的最大批量日期"""
@@ -31,35 +34,59 @@ def validate_date(date):
     
     if not date > log_date:
         print("\033[1;31;40minput_date is not valid, system exit...\033[0m")
-        sys.exit(-1)
+        return -1
+        
+    return 0
 
 def backup_ap(input_date):
     """备份服务器上已存在的AP,若已备份则不备份"""
+    return_dict = {}
+    return_dict["returnCode"] = 200
+    return_dict["returnMsg"] = ""
     print("backup ap...")
     APlist = os.listdir(config.apsql_path.format(date=input_date, APNAME=""))
     print(APlist)
     
     ##判断/etl/etldata/script/odssql/路径是否存在
     if not os.path.exists(config.apsql_ods_path.format(APNAME="")):
-        os.makedirs(config.apsql_ods_path.format(APNAME=""))
+        try:
+            os.makedirs(config.apsql_ods_path.format(APNAME=""))
+        except Exception:
+            return_dict["returnCode"] = 400
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            return_dict["returnMsg"] = repr(traceback.format_exception(exc_type, exc_value, exc_traceback))
+            return return_dict
     
     for AP in APlist:
-        if not os.path.exists(config.apsql_ods_path.format(APNAME=AP)):   # 若原ods目录下没有对应的AP,复制AP到此目录
-            print("load %s" %AP)
-            shutil.copy(config.apsql_path.format(date=input_date, APNAME=AP), config.apsql_ods_path.format(APNAME=""))
-        else:   # 若已存在对应的AP,复制AP到backup
-            if os.path.exists(config.backup_path.format(date=input_date)+AP): 
-            # 判断backup目录下是否已有对应的AP,若有,则不复制
-                print("backup exists %s" %AP)
-            else:
-                print("backup %s" %AP)
-                shutil.copy(config.apsql_ods_path.format(APNAME=AP), config.backup_path.format(date=input_date))
-                
+        try:
+            if not os.path.exists(config.apsql_ods_path.format(APNAME=AP)):   # 若原ods目录下没有对应的AP,复制AP到此目录
                 print("load %s" %AP)
+          
                 shutil.copy(config.apsql_path.format(date=input_date, APNAME=AP), config.apsql_ods_path.format(APNAME=""))
+                
+            else:   # 若已存在对应的AP,复制AP到backup
+                if os.path.exists(config.backup_path.format(date=input_date)+AP): 
+                # 判断backup目录下是否已有对应的AP,若有,则不复制
+                    print("backup exists %s" %AP)
+                else:
+                    print("backup %s" %AP)
+                    shutil.copy(config.apsql_ods_path.format(APNAME=AP), config.backup_path.format(date=input_date))
+                    
+                    print("load %s" %AP)
+                    shutil.copy(config.apsql_path.format(date=input_date, APNAME=AP), config.apsql_ods_path.format(APNAME=""))
+        except FileNotFoundError:
+            return_dict["returnCode"] = 400
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            return_dict["returnMsg"] = repr(traceback.format_exception(exc_type, exc_value, exc_traceback))
+            return return_dict
+    return return_dict
 
+    
 def get_backup_table(input_date):
     """找出需要备份的所有表"""
+    return_dict = {}
+    return_dict["returnCode"] = 200
+    return_dict["returnMsg"] = ""
     with open(config.alter_table_path.format(date=input_date), 'r') as f:
         data = f.read()
     
@@ -77,8 +104,15 @@ def get_backup_table(input_date):
     
     print("backup_table_list:", backup_table_list)
     
-    backup_tables(input_date, backup_table_list)
-
+    try:
+        backup_tables(input_date, backup_table_list)
+    except FileNotFoundError:
+        return_dict["returnCode"] = 400
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        return_dict["returnMsg"] = repr(traceback.format_exception(exc_type, exc_value, exc_traceback))
+        return return_dict
+    return return_dict
+    
     
 def backup_tables(input_date, backup_table_list):
     """备份需要的表结构:包括"""
@@ -121,8 +155,9 @@ def backup_schedule(input_date):
             if status:
                 print("\033[1;31;40mexport %s error\033[0m" % table)
                 print(output)
-                sys.exit(-1)
-        
+                return -1
+    return 0
+    
 def load_schedule(input_date):
     """LOAD JOB_METADATA,和 JOB_SEQ"""
     
@@ -134,7 +169,7 @@ def load_schedule(input_date):
         print("\033[1;31;40mload JOB_METADATA error, cat JOB_METADATA.error see detail \033[0m")
         with open('JOB_METADATA.error','w') as f:
             f.write(output)
-        sys.exit(-1)
+        return -1
     
     print("load JOB_SEQ...")
     cmd = 'db2 connect to {dwmmdb} user {dwmmuser} using {dwmmpwd} && db2 "load from /etl/etldata/script/yatop_update/{date}/backup/JOB_SEQ.del of del replace into ETL.JOB_SEQ"'.format(dwmmdb=config.dwmmdb, dwmmuser=config.dwmmuser, dwmmpwd=config.dwmmpwd, date=input_date)
@@ -144,8 +179,9 @@ def load_schedule(input_date):
         print("\033[1;31;40mload JOB_SEQ error, cat JOB_SEQ.error see detail \033[0m")
         with open('JOB_SEQ.error','w') as f:
             f.write(output)
-        sys.exit(-1)
-
+        return -1
+    return 0
+    
 def execute(date, file_name):
     print("execute %s" %file_name)
     cmd = "db2 -tvf /etl/etldata/script/yatop_update/"+date+"/"+file_name
@@ -158,57 +194,68 @@ def execute(date, file_name):
         print("\033[1;31;40m execute %s error, cat %s.error to see detail \033[0m" % (file_name, file_name))
         with open(file_name+'.error', 'w') as f:
             f.write(output)
-        sys.exit(-1)
-    
-    
-                
-if __name__=="__main__":
-
-    input_date = input("please input one date(default:newest date in DSA.ORGIN_TABLE_DETAIL):")
-    
-    # DSN=config.DSN
-    # DSNUSER=config.DSNUSER
-    # DSNPWD=config.DSNPWD
-    # con = pyodbc.connect(DSN=DSN,UID=DSNUSER,PWD=DSNPWD)
-    # cursor_dw = con.cursor()
-    
-    conn = ibm_db.connect("DATABASE=YATOPDB;HOSTNAME=101.37.36.131;PORT=62000;PROTOCOL=TCPIP;UID=appinst;PWD=appinst;", "", "")
-    
-    if not input_date:
+        return -1
+    return 0
         
-        ## get newest date in DSA.ORGIN_TABLE_DETAIL
-        sql = "SELECT DISTINCT CHANGE_DATE FROM DSA.ORGIN_TABLE_DETAIL ORDER BY CHANGE_DATE DESC"
-        # cursor_dw.execute(sql)
-        # rows = cursor_dw.fetchone()
-        stmt = ibm_db.exec_immediate(conn, sql);
-        rows = ibm_db.fetch_tuple(stmt)
-        
-        input_date = rows[0]
+def main():
+    return_dict = {}
+    sql = "SELECT DISTINCT CHANGE_DATE FROM DSA.ORGIN_TABLE_DETAIL ORDER BY CHANGE_DATE DESC"
+    stmt = ibm_db.exec_immediate(conn, sql);
+    rows = ibm_db.fetch_tuple(stmt)
+    input_date = rows[0]
         
         
-        if str(input_date) == '00000000':
-            print("\033[1;31;40mdate is not valid,sys exit...\033[0m")
-            sys.exit(-1)
+    if str(input_date) == '00000000':
+        print("\033[1;31;40mdate is not valid,sys exit...\033[0m")
+        return_dict["returnCode"] = 400
+        return_dict["returnMsg"] = "no data in database"
+        return json.dumps(return_dict)
     
     print("input_date:%s" %input_date)
     
-    validate_date(input_date)
+    ret = validate_date(input_date)
+    if ret:
+        return_dict["returnCode"] = 400
+        return_dict["returnMsg"] = "the date is < max(date) in job_log"
+        return json.dumps(return_dict)
         
     if not os.path.exists(config.backup_path.format(date=input_date)):
         os.makedirs(config.backup_path.format(date=input_date))
     
-    backup_ap(input_date)   # 备份AP
+    return_dict = backup_ap(input_date)   # 备份AP
+    if return_dict.get("returnCode") != 200:
+        return json.dumps(return_dict)
     
-    get_backup_table(input_date)  # 备份表结构
+    return_dict = get_backup_table(input_date)  # 备份表结构
+    if return_dict.get("returnCode") != 200:
+        return json.dumps(return_dict)
     
-    backup_schedule(input_date)   # 备份调度表
+    ret = backup_schedule(input_date)   # 备份调度表
+    if ret:
+        return_dict["returnCode"] = 400
+        return_dict["returnMsg"] = "backup_schedule error!"
+        return json.dumps(return_dict)
     
-    load_schedule(input_date) # 重新LOAD调度表
+    ret = load_schedule(input_date) # 重新LOAD调度表
+    if ret:
+        return_dict["returnCode"] = 400
+        return_dict["returnMsg"] = "load_schedule error!"
+        return json.dumps(return_dict)
     
     execute_list = ["delta_tables.ddl", "ods_tables.ddl", "his_tables.ddl", "alter_table.sql", "job_schedule.SQL"] 
 
     for file in execute_list:
-        execute(input_date, file)
+        ret = execute(input_date, file)
+        if ret:
+            return_dict["returnCode"] = 400
+            return_dict["returnMsg"] = "execute {} error!".format(file)
+            return json.dumps(return_dict)
+            
+    return json.dumps({"returnCode":200, "returnMsg":"execute OK,"})
+                
+if __name__=="__main__":
+    resp = main()
+    print(resp)
     
     
     
